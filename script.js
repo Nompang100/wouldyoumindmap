@@ -14,6 +14,22 @@ let selectedLine = null;
 
 let undoStack = [];
 let redoStack = [];
+// ---------------- Firebase ----------------
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc } 
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB2aQ_TfnAacGW4Q9R16zHCdoH7L7ShYX8",
+  authDomain: "wouldyouomindmap.firebaseapp.com",
+  projectId: "wouldyouomindmap",
+  storageBucket: "wouldyouomindmap.firebasestorage.app",
+  messagingSenderId: "377740724524",
+  appId: "1:377740724524:web:d8f56c8c88829b1e2e0489",
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 // --------------------- 파스텔톤 랜덤 색 ---------------------
 function getRandomPastelColor() {
@@ -504,3 +520,4 @@ window.addEventListener("load", () => {
 
 document.getElementById("saveBtn")?.addEventListener("click", saveMindmapToLocal);
 document.getElementById("loadBtn")?.addEventListener("click", loadMindmapFromLocal);
+
