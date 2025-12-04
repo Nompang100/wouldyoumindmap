@@ -1,506 +1,243 @@
-function getContrastColor(bg) {
-  const rgb = bg.match(/\d+/g).map(Number);
-  const yiq = ((rgb[0]*299)+(rgb[1]*587)+(rgb[2]*114))/1000;
-  return yiq >= 128 ? "#000" : "#fff";
-}
-const canvas = document.getElementById("canvas");
-const lineLayer = document.getElementById("lines");
+/******************************
+ * Firebase 초기화
+ ******************************/
+const firebaseConfig = {
+  apiKey: "AIzaSyB2aQ_TfnAacGW4Q9R16zHCdoH7L7ShYX8",
+  authDomain: "wouldyouomindmap.firebaseapp.com",
+  projectId: "wouldyouomindmap",
+  storageBucket: "wouldyouomindmap.firebasestorage.app",
+  messagingSenderId: "377740724524",
+  appId: "1:377740724524:web:d8f56c8c88829b1e2e0489",
+  databaseURL: "https://wouldyouomindmap-default-rtdb.firebaseio.com/"
+};
 
-let nodes = [];
-let connections = [];
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+/******************************
+ * 전역 변수
+ ******************************/
+let nodes = [];      
+let lines = [];      
 let selectedNode = null;
-let lastSelectedNode = null;
-let selectedLine = null;
+let currentMapName = "default";
 
-let undoStack = [];
-let redoStack = [];
+/******************************
+ * DOM 요소
+ ******************************/
+const canvas = document.getElementById("canvas");
+const svg = document.getElementById("lines");
 
-// --------------------- 파스텔톤 랜덤 색 ---------------------
-function getRandomPastelColor() {
-  const r = Math.floor((Math.random() * 127) + 127);
-  const g = Math.floor((Math.random() * 127) + 127);
-  const b = Math.floor((Math.random() * 127) + 127);
-  return `rgb(${r},${g},${b})`;
-}
+const newMapBtn = document.getElementById("newMapBtn");
+const saveMapBtn = document.getElementById("saveMapBtn");
+const loadMapBtn = document.getElementById("loadMapBtn");
 
-// --------------------- 노드 생성 ---------------------
-function createNode(x, y, text = "편집을 하려면 클릭하세요.") {
-  const safePos = findNonOverlappingPosition(x, y, 120);
-  const node = document.createElement("div");
-  node.className = "node";
-  node.innerText = text;
-  node.style.left = safePos.x + "px";
-  node.style.top = safePos.y + "px";
-  node.style.color = "#888";
-  node.style.borderColor = "#aaa";
+const fileModal = document.getElementById("fileModal");
+const fileList = document.getElementById("fileList");
+const closeModal = document.getElementById("closeModal");
 
-  let color;
-  let attempts = 0;
-  do {
-    color = getRandomPastelColor();
-    attempts++;
-  } while (nodes.some(n => n.style.background === color) && attempts < 100);
+/******************************
+ * 마인드맵 기본 기능
+ ******************************/
 
-  node.style.background = color;
-  node.dataset.id = Math.random();
+function createNode(x = 200, y = 200, text = "", color = randomPastel()) {
+  const div = document.createElement("div");
+  div.className = "node";
+  div.style.left = x + "px";
+  div.style.top = y + "px";
+  div.style.borderColor = color;
+  div.style.color = color;
 
-  canvas.appendChild(node);
+  div.contentEditable = true;
+  div.innerText = text;
+
+  canvas.appendChild(div);
+
+  const node = { id: Date.now() + "_" + Math.random(), el: div, x, y, text, color };
   nodes.push(node);
 
-  makeDraggable(node);
-  enableNodeEditing(node);
-  enableSelect(node);
+  div.addEventListener("mousedown", () => selectNode(node));
+  div.addEventListener("input", () => onNodeEdit(node));
 
-  saveState();
+  makeDraggable(node);
   return node;
 }
 
-// --------------------- 겹치지 않게 위치 계산 ---------------------
-function findNonOverlappingPosition(x, y, minDist) {
-  let safe = false;
-  let attempts = 0;
-
-  while (!safe && attempts < 1000) {
-    safe = nodes.every(n => {
-      const dx = n.offsetLeft - x;
-      const dy = n.offsetTop - y;
-      return Math.sqrt(dx*dx + dy*dy) > minDist;
-    });
-    if (!safe) {
-      x += (Math.random() - 0.5) * 100;
-      y += (Math.random() - 0.5) * 100;
-    }
-    attempts++;
-  }
-
-  return {x, y};
+function selectNode(n) {
+  nodes.forEach(n => n.el.classList.remove("selected"));
+  n.el.classList.add("selected");
+  selectedNode = n;
 }
 
-// --------------------- 노드 편집 ---------------------
-function enableNodeEditing(node) {
-  node.addEventListener("dblclick", () => {
-    if(node.innerText === "편집을 하려면 클릭하세요.") node.innerText = "";
-    node.style.color = "#000";
-    node.style.borderColor = "#000";
-    node.contentEditable = true;
-    node.focus();
-  });
-
-  node.addEventListener("blur", () => {
-    node.contentEditable = false;
-    if(node.innerText.trim() === "") {
-      node.innerText = "편집을 하려면 클릭하세요.";
-      node.style.color = "#888";
-      node.style.borderColor = "#aaa";
-    } else {
-     const bg = node.style.background;
-
-// 배경색 밝기 계산 (YIQ)
-function getContrastColor(bg) {
-  const rgb = bg.match(/\d+/g).map(Number);
-  const yiq = ((rgb[0]*299)+(rgb[1]*587)+(rgb[2]*114))/1000;
-  return yiq >= 128 ? "#000" : "#fff"; // 밝으면 검정, 어두우면 흰색
+function onNodeEdit(node) {
+  node.text = node.el.innerText;
+  node.el.style.borderColor = node.color;
+  node.el.style.color = node.color;
 }
 
-node.style.borderColor = bg;
-node.style.color = getContrastColor(bg);
-
-    }
-    updateLines();
-    saveState();
-  });
-
-  node.addEventListener("keydown", e => {
-    if(e.key === "Enter") {
-      e.preventDefault();
-      node.blur();
-    }
-  });
-}
-
-// --------------------- 노드 선택 ---------------------
-function enableSelect(node) {
-  node.addEventListener("click", e => {
-    e.stopPropagation();
-    selectNode(node);
-  });
-}
-
-function selectNode(node) {
-  nodes.forEach(n => n.classList.remove("selected"));
-  node.classList.add("selected");
-  selectedNode = node;
-  lastSelectedNode = node;
-  selectedLine = null;
-  updateLineSelection();
-}
-
-document.body.addEventListener("click", () => {
-  nodes.forEach(n => n.classList.remove("selected"));
-  selectedNode = null;
-  selectedLine = null;
-  updateLineSelection();
-});
-
-// --------------------- 드래그 & 합치기 ---------------------
-let draggingNode = null;
-let offsetX = 0, offsetY = 0;
-let hoveredForMerge = null;
-
+/******************************
+ * 드래그
+ ******************************/
 function makeDraggable(node) {
-  node.addEventListener("mousedown", e => {
-    draggingNode = node;
-    offsetX = e.clientX - node.offsetLeft;
-    offsetY = e.clientY - node.offsetTop;
-  });
+  let offsetX = 0, offsetY = 0;
 
-  document.addEventListener("mousemove", e => {
-    if(!draggingNode) return;
+  node.el.addEventListener("mousedown", (e) => {
+    selectNode(node);
+    offsetX = e.clientX - node.el.offsetLeft;
+    offsetY = e.clientY - node.el.offsetTop;
 
-    draggingNode.style.left = (e.clientX - offsetX) + "px";
-    draggingNode.style.top = (e.clientY - offsetY) + "px";
+    function move(e2) {
+      node.x = e2.clientX - offsetX;
+      node.y = e2.clientY - offsetY;
 
-    hoveredForMerge = null;
-    nodes.forEach(other => {
-      if(other !== draggingNode){
-        const dx = (other.offsetLeft + other.offsetWidth/2) - (draggingNode.offsetLeft + draggingNode.offsetWidth/2);
-        const dy = (other.offsetTop + other.offsetHeight/2) - (draggingNode.offsetTop + draggingNode.offsetHeight/2);
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if(dist < 30){
-          hoveredForMerge = other;
-          other.style.borderColor = "#ff0000"; // 합치기 가능 표시
-        } else {
-          other.style.borderColor = other === selectedNode ? "#0070f3" : other.style.background;
-        }
-      }
-    });
+      node.el.style.left = node.x + "px";
+      node.el.style.top = node.y + "px";
 
-    updateLines();
-  });
-
-  document.addEventListener("mouseup", e => {
-    if(draggingNode){
-      if(hoveredForMerge){
-        mergeNodes(hoveredForMerge, draggingNode);
-        hoveredForMerge.style.borderColor = hoveredForMerge.style.background;
-        hoveredForMerge = null;
-      }
-      saveState();
-      draggingNode = null;
+      redrawLines();
     }
+
+    function stop() {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", stop);
+    }
+
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", stop);
   });
 }
 
-// --------------------- 색 혼합 ---------------------
-function mixColors(color1, color2){
-  const rgb1 = color1.match(/\d+/g).map(Number);
-  const rgb2 = color2.match(/\d+/g).map(Number);
-  const r = Math.floor((rgb1[0]+rgb2[0])/2);
-  const g = Math.floor((rgb1[1]+rgb2[1])/2);
-  const b = Math.floor((rgb1[2]+rgb2[2])/2);
+/******************************
+ * 선 그리기
+ ******************************/
+function createLine(a, b) {
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("stroke", "#999");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke-width", "2");
+
+  svg.appendChild(path);
+  lines.push({ a, b, path });
+
+  redrawLines();
+}
+
+function redrawLines() {
+  for (let l of lines) {
+    const x1 = l.a.x + 50;
+    const y1 = l.a.y + 20;
+    const x2 = l.b.x + 50;
+    const y2 = l.b.y + 20;
+
+    const c1x = (x1 + x2) / 2;
+    const c1y = y1 - 80;
+
+    const d = `M ${x1} ${y1} Q ${c1x} ${c1y}, ${x2} ${y2}`;
+    l.path.setAttribute("d", d);
+  }
+}
+
+/******************************
+ * 랜덤 파스텔 색
+ ******************************/
+function randomPastel() {
+  const r = Math.floor(Math.random() * 150 + 100);
+  const g = Math.floor(Math.random() * 150 + 100);
+  const b = Math.floor(Math.random() * 150 + 100);
   return `rgb(${r},${g},${b})`;
 }
 
-// --------------------- 노드 합치기 ---------------------
-function mergeNodes(target, moving){
-  target.style.background = mixColors(target.style.background, moving.style.background);
-
-  if(moving.innerText.trim() === target.innerText.trim()){
-    // 같으면 유지
-  } else {
-    target.innerText = "편집을 하려면 클릭하세요.";
-    target.style.color = "#888";
-    target.style.borderColor = target.style.background;
-  }
-
-  connections.forEach(c => {
-    if(c.parent === moving) c.parent = target;
-    if(c.child === moving) c.child = target;
-  });
-
-  moving.remove();
-  nodes = nodes.filter(n => n !== moving);
-
-  updateLines();
-}
-
-// --------------------- 선 생성 ---------------------
-function connect(parent, child) {
-  const path = document.createElementNS("http://www.w3.org/2000/svg","path");
-  path.setAttribute("stroke","#555");
-  path.setAttribute("stroke-width", 4);
-  path.setAttribute("fill","none");
-  path.setAttribute("pointer-events","stroke"); 
-  lineLayer.appendChild(path);
-
-  const conn = { parent, child, path };
-  connections.push(conn);
-
-  enableLineSelection(conn);
-  updateLines();
-
-  return conn;
-}
-
-// --------------------- 선 선택 ---------------------
-function enableLineSelection(conn) {
-  conn.path.addEventListener("click", e => {
-    e.stopPropagation();
-    selectedLine = conn;
-    selectedNode = null;
-    updateLineSelection();
-  });
-}
-
-function updateLineSelection() {
-  connections.forEach(c => {
-    if(c===selectedLine){
-      c.path.setAttribute("stroke","#0070f3");
-      c.path.setAttribute("stroke-width",5);
-    } else {
-      c.path.setAttribute("stroke","#555");
-      c.path.setAttribute("stroke-width",4);
-    }
-  });
-}
-
-// --------------------- 선 업데이트 ---------------------
-function updateLines() {
-  connections.forEach(c => {
-    const startX = c.parent.offsetLeft + c.parent.offsetWidth/2;
-    const startY = c.parent.offsetTop + c.parent.offsetHeight/2;
-    const endX = c.child.offsetLeft + c.child.offsetWidth/2;
-    const endY = c.child.offsetTop + c.child.offsetHeight/2;
-
-    const ctrlX = (startX + endX)/2;
-    const ctrlY = (startY + endY)/2 - 50; 
-    c.path.setAttribute("d", `M ${startX} ${startY} Q ${ctrlX} ${ctrlY} ${endX} ${endY}`);
-  });
-}
-
-// --------------------- 버튼: 자식 노드 ---------------------
-document.getElementById("addChildBtn").onclick = () => {
-  let parent = selectedNode || lastSelectedNode || nodes[0];
-  if(!parent) return alert("부모 노드가 없습니다!");
-
-  for(let i=0;i<1;i++){ // 필요 시 반복해서 여러 자식 가능
-    const angle = Math.random() * Math.PI*2;
-    const radius = 200;
-    const px = parent.offsetLeft + Math.cos(angle)*radius;
-    const py = parent.offsetTop + Math.sin(angle)*radius;
-
-    const newNode = createNode(px, py);
-    connect(parent,newNode);
-  }
-
-  selectNode(parent);
-  updateLines();
-  saveState();
-};
-
-// --------------------- 삭제 ---------------------
-document.getElementById("deleteBtn").onclick = () => {
-  if(selectedNode){
-    connections = connections.filter(c=>{
-      if(c.parent===selectedNode || c.child===selectedNode){
-        c.path.remove();
-        return false;
-      }
-      return true;
-    });
-    selectedNode.remove();
-    nodes = nodes.filter(n=>n!==selectedNode);
-    selectedNode=null;
-    updateLines();
-    saveState();
-  } else if(selectedLine){
-    selectedLine.path.remove();
-    connections = connections.filter(c=>c!==selectedLine);
-    selectedLine=null;
-    updateLines();
-    saveState();
-  }
-};
-
-// --------------------- 노드 색 변경 ---------------------
-document.getElementById("applyNodeColor").onclick = () => {
-  if(!selectedNode) {
-    alert("노드를 선택하세요!");
-    return;
-  }
-  const newColor = document.getElementById("nodeColorPicker").value;
-  selectedNode.style.background = newColor;
- const textColor = getContrastColor(newColor);
-  selectedNode.style.color = textColor;
-  selectedNode.style.borderColor = newColor;
-
-
-  connections.forEach(c => {
-    if(c.child === selectedNode || c.parent === selectedNode){
-      c.path.setAttribute("stroke", newColor);
-    }
-  });
-
-  updateLines();
-  saveState();
-};
-
-// --------------------- Delete 키 ---------------------
-document.addEventListener("keydown", e=>{
-  if(e.key==="Delete") document.getElementById("deleteBtn").click();
-});
-
-// --------------------- Undo/Redo ---------------------
-function saveState(){
-  const state = {
-    nodes: nodes.map(n=>({
-      id:n.dataset.id,
-      text:n.innerText,
-      left:n.offsetLeft,
-      top:n.offsetTop,
-      bg:n.style.background
-    })),
-    connections: connections.map(c=>({
-      parentId:c.parent.dataset.id,
-      childId:c.child.dataset.id
-    }))
-  };
-  undoStack.push(JSON.parse(JSON.stringify(state)));
-  if(undoStack.length>50) undoStack.shift();
-  redoStack=[];
-}
-
-function restoreState(state){
-  nodes.forEach(n=>n.remove());
-  nodes=[];
-  lineLayer.innerHTML="";
-  connections=[];
-  const nodeMap = {};
-  state.nodes.forEach(n=>{
-    const node=createNode(n.left,n.top,n.text);
-    node.style.background=n.bg;
-    node.dataset.id=n.id;
-    nodeMap[n.id]=node;
-  });
-  state.connections.forEach(c=>{
-    connect(nodeMap[c.parentId],nodeMap[c.childId]);
-  });
-  updateLines();
-}
-
-document.addEventListener("keydown", e=>{
-  if(e.ctrlKey && e.key.toLowerCase()==="z"){
-    if(undoStack.length>1){
-      const state=undoStack.pop();
-      redoStack.push(state);
-      restoreState(undoStack[undoStack.length-1]);
-    }
-  } else if(e.ctrlKey && e.key.toLowerCase()==="x"){
-    if(redoStack.length>0){
-      const state=redoStack.pop();
-      restoreState(state);
-      undoStack.push(state);
-    }
-  }
-});
-
-// --------------------- 초기 루트 노드 ---------------------
-const root = createNode(300,200,"편집을 하려면 클릭하세요.");
-selectNode(root);
-saveState();
-updateLines();
-
-/* ------------------------------
-    🧠 LocalStorage 저장/불러오기
---------------------------------*/
-
-// 현재 mindmap 상태를 JSON으로 변환하는 함수
-function exportMindmapData() {
-  return {
-    nodes: Object.values(nodes).map(n => ({
+/******************************
+ * 🔥 Firebase 저장
+ ******************************/
+async function saveMap(name = currentMapName) {
+  const data = {
+    nodes: nodes.map(n => ({
       id: n.id,
       x: n.x,
       y: n.y,
       text: n.text,
       color: n.color
-    })),
-    lines: lines.map(l => ({
-      from: l.from.id,
-      to: l.to.id
     }))
   };
+  await db.ref("maps/" + name).set(data);
+  alert("저장 완료!");
 }
 
-// 데이터를 현재 mindmap에 반영하는 함수
-function importMindmapData(data) {
-  // 기존 내용 초기화
-  Object.values(nodes).forEach(n => n.element.remove());
-  nodes = {};
-  lines.forEach(l => l.svg.remove());
-  lines = [];
-
-  // 노드 복원
-  data.nodes.forEach(n => {
-    createNode(n.x, n.y, n.text, n.color, n.id);
-  });
-
-  // 라인 복원
-  data.lines.forEach(l => {
-    const from = nodes[l.from];
-    const to = nodes[l.to];
-    if (from && to) connectNodes(from, to);
-  });
-}
-
-/* -----------------------------------
-     저장 버튼 (수동 저장)
------------------------------------- */
-
-function saveMindmapToLocal() {
-  const data = exportMindmapData();
-  localStorage.setItem("mindmapData", JSON.stringify(data));
-  console.log("💾 저장 완료");
-}
-
-function loadMindmapFromLocal() {
-  const raw = localStorage.getItem("mindmapData");
-  if (!raw) {
-    console.log("저장된 데이터 없음");
+async function loadMap(name) {
+  const snap = await db.ref("maps/" + name).get();
+  if (!snap.exists()) {
+    alert("파일 없음");
     return;
   }
+  const data = snap.val();
+  loadMapData(data);
+  currentMapName = name;
+}
 
-  try {
-    const data = JSON.parse(raw);
-    importMindmapData(data);
-    console.log("📂 불러오기 완료");
-  } catch (e) {
-    console.error("데이터 손상됨");
+function loadMapData(data) {
+  nodes = [];
+  lines = [];
+  canvas.innerHTML = "";
+  svg.innerHTML = "";
+
+  for (let n of data.nodes) {
+    createNode(n.x, n.y, n.text, n.color);
+  }
+
+  for (let i = 0; i < nodes.length - 1; i++) {
+    createLine(nodes[i], nodes[i + 1]);
   }
 }
 
-/* -----------------------------------
-      ⏱ 자동저장 기능 (10초마다)
------------------------------------- */
+/******************************
+ * 파일 리스트 불러오기
+ ******************************/
+async function showFileList() {
+  fileList.innerHTML = "";
 
+  const snap = await db.ref("maps").get();
+  const maps = snap.val() || {};
+
+  Object.keys(maps).forEach(name => {
+    const li = document.createElement("li");
+    li.innerText = name;
+    li.style.cursor = "pointer";
+    li.onclick = () => {
+      loadMap(name);
+      fileModal.classList.add("hidden");
+    };
+    fileList.appendChild(li);
+  });
+
+  fileModal.classList.remove("hidden");
+}
+
+/******************************
+ * 이벤트
+ ******************************/
+newMapBtn.onclick = () => {
+  const name = prompt("새 파일 이름?");
+  if (!name) return;
+  currentMapName = name;
+  nodes = [];
+  lines = [];
+  canvas.innerHTML = "";
+  svg.innerHTML = "";
+  createNode(300, 300, "새 노드");
+};
+
+saveMapBtn.onclick = () => saveMap();
+loadMapBtn.onclick = () => showFileList();
+closeModal.onclick = () => fileModal.classList.add("hidden");
+
+/******************************
+ * 🔥 자동 저장 (10초)
+ ******************************/
 setInterval(() => {
-  saveMindmapToLocal();
-}, 10000); // 10초
+  saveMap(currentMapName);
+}, 10000);
 
-/* -----------------------------------
-      페이지 로드 시 자동 불러오기
------------------------------------- */
-
-window.addEventListener("load", () => {
-  loadMindmapFromLocal();
-});
-
-/* -----------------------------------
-      UI 버튼 연결 (원하면)
------------------------------------- */
-
-// HTML에 아래 버튼을 추가해도 됨:
-// <button id="saveBtn">저장</button>
-// <button id="loadBtn">불러오기</button>
-
-document.getElementById("saveBtn")?.addEventListener("click", saveMindmapToLocal);
-document.getElementById("loadBtn")?.addEventListener("click", loadMindmapFromLocal);
+/******************************
+ * 초기 첫 노드
+ ******************************/
+createNode(300, 300, "중심");
