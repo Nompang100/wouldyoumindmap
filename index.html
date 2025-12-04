@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Coggle-style Mindmap (Modular)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="toolbar">
+    <button id="addChildBtn">+</button>
+    <button id="deleteBtn">-</button>
+    <label>노드 색</label>
+    <input type="color" id="nodeColorPicker" value="#ffffff">
+    <button id="applyNodeColor">색 적용</button>
+<button id="saveBtn">저장</button>
+<button id="loadBtn">불러오기</button>
+
+
+  </div>
+
+  <svg id="lines"></svg>
+  <div id="canvas"></div>
+
+  <!-- App entry (ES module) -->
+  <script type="module" src="js/App.js"></script>
+</body>
+</html>
