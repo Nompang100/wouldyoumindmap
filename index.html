@@ -22,6 +22,33 @@
   <div id="canvas"></div>
 
   <!-- App entry (ES module) -->
-  <script type="module" src="js/App.js"></script>
+  <script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+  import { getDatabase, ref, set, get, child } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "키",
+    authDomain: "도메인",
+    projectId: "프로젝트",
+    storageBucket: "스토리지",
+    messagingSenderId: "메시지 ID",
+    appId: "앱 ID",
+    databaseURL: "Realtime DB 주소"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  window.saveMap = async function(id, data) {
+    await set(ref(db, "maps/" + id), data);
+  };
+
+  window.loadMap = async function(id) {
+    const snap = await get(child(ref(db), "maps/" + id));
+    return snap.exists() ? snap.val() : null;
+  };
+</script>
+
 </body>
 </html>
+
